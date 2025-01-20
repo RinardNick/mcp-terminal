@@ -1,0 +1,51 @@
+{
+  "name": "@rinardnick/mcp-terminal",
+  "version": "0.1.0",
+  "description": "A secure terminal execution server implementing the Model Context Protocol (MCP). This server provides controlled command execution capabilities with security features and resource limits.",
+  "type": "module",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "bin": {
+    "mcp-terminal": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x build/index.js",
+    "start": "node build/index.js",
+    "dev": "ts-node --esm src/index.ts",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
+    "prepare": "npm run build"
+  },
+  "files": [
+    "build"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rinardnick/mcp-terminal.git"
+  },
+  "keywords": [
+    "mcp",
+    "terminal",
+    "server",
+    "command",
+    "execution"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/rinardnick/mcp-terminal/issues"
+  },
+  "homepage": "https://github.com/rinardnick/mcp-terminal#readme",
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.1.1",
+    "zod": "^3.24.1"
+  }
+}

@@ -1,4 +1,0 @@
-mcp>=1.2.0
-httpx>=0.24.0
-pytest>=8.0.0
-pytest-asyncio>=0.23.5 
