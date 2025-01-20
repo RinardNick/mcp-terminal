@@ -122,4 +122,41 @@ async def test_command_streaming():
     executor = TerminalExecutor(timeout_ms=100)
     with pytest.raises(asyncio.TimeoutError):
         async for _ in executor.execute_stream("sleep 1"):
-            pass 
+            pass
+
+@pytest.mark.asyncio
+async def test_resource_limits():
+    """Test resource limits for command execution"""
+    # Test CPU time limit
+    executor = TerminalExecutor(cpu_time_ms=100)  # 100ms CPU time limit
+    with pytest.raises(ValueError) as exc_info:
+        await executor.execute("python3 -c 'while True: pass'")  # CPU-intensive loop
+    assert "CPU time limit exceeded" in str(exc_info.value)
+    
+    # Test memory limit
+    executor = TerminalExecutor(max_memory_mb=10)  # 10MB memory limit
+    with pytest.raises(ValueError) as exc_info:
+        # Try to allocate more memory than allowed
+        await executor.execute("python3 -c 'x = [0] * 1000000000'")
+    assert "Memory limit exceeded" in str(exc_info.value)
+    
+    # Test process limit
+    executor = TerminalExecutor(max_processes=1)  # Only allow 1 subprocess
+    with pytest.raises(ValueError) as exc_info:
+        # Try to spawn multiple processes using a bash script
+        await executor.execute("""bash -c '
+            python3 -c "import time; time.sleep(10)" &
+            python3 -c "import time; time.sleep(10)" &
+            wait
+        '""")
+    assert "Process limit exceeded" in str(exc_info.value)
+    
+    # Test combined limits
+    executor = TerminalExecutor(
+        cpu_time_ms=1000,
+        max_memory_mb=50,
+        max_processes=2
+    )
+    # Test command within limits should succeed
+    result = await executor.execute("echo 'test'")
+    assert result.exit_code == 0 
