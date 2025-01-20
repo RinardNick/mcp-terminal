@@ -144,6 +144,76 @@ async def test_unexpected_errors():
     # Cleanup
     await server.stop()
 
+@pytest.mark.asyncio
+async def test_server_status():
+    """Test server status reporting"""
+    server = MCPTerminalServer()
+    transport = MockTransport()
+    
+    # Test initial status
+    status = server.get_status()
+    assert status["state"] == "stopped"
+    assert status["uptime"] == 0
+    assert status["message_count"] == {"sent": 0, "received": 0, "errors": 0}
+    
+    # Test running status
+    await server.start(transport)
+    status = server.get_status()
+    assert status["state"] == "running"
+    assert status["uptime"] > 0
+    assert status["message_count"] == {"sent": 0, "received": 0, "errors": 0}
+    
+    # Test message counting
+    await server.send_message({"type": "test"})
+    await server.receive_message()
+    
+    try:
+        await server.handle_message({"type": "invalid"})
+    except ServerError:
+        pass
+        
+    status = server.get_status()
+    assert status["message_count"] == {"sent": 1, "received": 1, "errors": 1}
+    
+    # Test stopped status
+    await server.stop()
+    status = server.get_status()
+    assert status["state"] == "stopped"
+    assert status["uptime"] == 0
+    assert status["message_count"] == {"sent": 0, "received": 0, "errors": 0}
+
+@pytest.mark.asyncio
+async def test_server_metrics():
+    """Test server metrics collection"""
+    server = MCPTerminalServer()
+    transport = MockTransport()
+    
+    # Test initial metrics
+    metrics = server.get_metrics()
+    assert "message_latency_ms" in metrics
+    assert metrics["message_latency_ms"]["avg"] == 0
+    assert metrics["message_latency_ms"]["max"] == 0
+    assert metrics["message_latency_ms"]["min"] == 0
+    
+    await server.start(transport)
+    
+    # Test metrics after some activity
+    transport.add_latency = 50  # Add 50ms latency
+    await server.send_message({"type": "test"})
+    await server.receive_message()
+    
+    transport.add_latency = 150  # Add 150ms latency
+    await server.send_message({"type": "test"})
+    await server.receive_message()
+    
+    metrics = server.get_metrics()
+    assert metrics["message_latency_ms"]["avg"] == 100  # (50 + 150) / 2
+    assert metrics["message_latency_ms"]["max"] == 150
+    assert metrics["message_latency_ms"]["min"] == 50
+    
+    # Cleanup
+    await server.stop()
+
 class MockTransport:
     """Mock transport for testing server startup"""
     def __init__(self, should_fail=False, should_fail_disconnect=False):
@@ -153,6 +223,7 @@ class MockTransport:
         self.should_fail_send = False
         self.should_fail_receive = False
         self.should_disconnect = False
+        self.add_latency = 0  # Simulated latency in ms
         
     async def connect(self):
         """Mock transport connection"""
@@ -173,6 +244,9 @@ class MockTransport:
             raise Exception("Transport disconnected")
         if self.should_fail_send:
             raise Exception("Send failed")
+        if self.add_latency:
+            import asyncio
+            await asyncio.sleep(self.add_latency / 1000)  # Convert ms to seconds
             
     async def receive(self):
         """Mock message receiving"""
@@ -181,4 +255,7 @@ class MockTransport:
             raise Exception("Transport disconnected")
         if self.should_fail_receive:
             raise Exception("Receive failed")
+        if self.add_latency:
+            import asyncio
+            await asyncio.sleep(self.add_latency / 1000)  # Convert ms to seconds
         return {"type": "test"}
