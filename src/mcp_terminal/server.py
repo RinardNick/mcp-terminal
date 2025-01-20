@@ -56,3 +56,25 @@ class MCPTerminalServer(Server):
     def is_running(self) -> bool:
         """Check if server is currently running"""
         return self._running
+
+    async def handle_message(self, message):
+        """Handle incoming protocol messages
+        
+        Args:
+            message: The message to process
+            
+        Raises:
+            ServerError: If the message is invalid or unsupported
+        """
+        if message is None:
+            raise ServerError("Invalid message format")
+            
+        if not isinstance(message, dict):
+            raise ServerError("Invalid message format")
+            
+        if "type" not in message:
+            raise ServerError("Missing required field: type")
+            
+        msg_type = message["type"]
+        if msg_type not in self.request_handlers:
+            raise ServerError(f"Unsupported message type: {msg_type}")
