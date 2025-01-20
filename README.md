@@ -96,7 +96,7 @@ The server implements the Model Context Protocol (MCP) with the following capabi
 {
   "protocol": "1.0.0",
   "name": "terminal",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "capabilities": {
     "execute": {
       "description": "Execute a terminal command",
