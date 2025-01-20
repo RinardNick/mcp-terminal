@@ -92,12 +92,67 @@ async def test_protocol_errors():
     # Cleanup
     await server.stop()
 
+@pytest.mark.asyncio
+async def test_transport_errors():
+    """Test server handling of transport-level errors"""
+    server = MCPTerminalServer()
+    transport = MockTransport()
+    
+    await server.start(transport)
+    
+    # Test send failure
+    transport.should_fail_send = True
+    with pytest.raises(ServerError) as exc_info:
+        await server.send_message({"type": "test"})
+    assert "Failed to send message" in str(exc_info.value)
+    
+    # Test receive failure
+    transport.should_fail_receive = True
+    with pytest.raises(ServerError) as exc_info:
+        await server.receive_message()
+    assert "Failed to receive message" in str(exc_info.value)
+    
+    # Test transport disconnect during operation
+    transport.should_disconnect = True
+    with pytest.raises(ServerError) as exc_info:
+        await server.send_message({"type": "test"})
+    assert "Transport disconnected unexpectedly" in str(exc_info.value)
+    assert server.is_running() == False
+    
+    # Cleanup
+    await server.stop()
+
+@pytest.mark.asyncio
+async def test_unexpected_errors():
+    """Test server handling of unexpected errors"""
+    server = MCPTerminalServer()
+    transport = MockTransport()
+    
+    await server.start(transport)
+    
+    # Test handler error
+    server.request_handlers["test"] = lambda msg: 1/0  # Will raise ZeroDivisionError
+    with pytest.raises(ServerError) as exc_info:
+        await server.handle_message({"type": "test"})
+    assert "Internal server error" in str(exc_info.value)
+    
+    # Test message serialization error
+    with pytest.raises(ServerError) as exc_info:
+        await server.send_message({"type": "test", "data": object()})  # Unserializable object
+    assert "Failed to serialize message" in str(exc_info.value)
+    
+    # Cleanup
+    await server.stop()
+
 class MockTransport:
     """Mock transport for testing server startup"""
     def __init__(self, should_fail=False, should_fail_disconnect=False):
         self.is_connected = False
         self.should_fail = should_fail
         self.should_fail_disconnect = should_fail_disconnect
+        self.should_fail_send = False
+        self.should_fail_receive = False
+        self.should_disconnect = False
         
     async def connect(self):
         """Mock transport connection"""
@@ -110,3 +165,20 @@ class MockTransport:
         if self.should_fail_disconnect:
             raise Exception("Disconnection failed")
         self.is_connected = False
+        
+    async def send(self, message):
+        """Mock message sending"""
+        if not self.is_connected or self.should_disconnect:
+            self.is_connected = False
+            raise Exception("Transport disconnected")
+        if self.should_fail_send:
+            raise Exception("Send failed")
+            
+    async def receive(self):
+        """Mock message receiving"""
+        if not self.is_connected or self.should_disconnect:
+            self.is_connected = False
+            raise Exception("Transport disconnected")
+        if self.should_fail_receive:
+            raise Exception("Receive failed")
+        return {"type": "test"}
