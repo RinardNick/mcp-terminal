@@ -2,3 +2,4 @@ uv.lock
 .env
 
 tests/__pycache__/
+src/mcp_terminal/__pycache__/
