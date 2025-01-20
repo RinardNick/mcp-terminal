@@ -44,7 +44,12 @@ class MCPTerminalServer(Server):
     async def stop(self):
         """Stop the server and cleanup"""
         if self._transport:
-            await self._transport.disconnect()
+            try:
+                await self._transport.disconnect()
+            except Exception as e:
+                # Still mark server as stopped but preserve transport state
+                self._running = False
+                raise ServerError(f"Failed to disconnect transport: {str(e)}") from e
             self._transport = None
         self._running = False
 

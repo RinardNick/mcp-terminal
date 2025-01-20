@@ -47,11 +47,30 @@ async def test_server_startup_errors():
     # Cleanup
     await server.stop()
 
+@pytest.mark.asyncio
+async def test_server_shutdown_errors():
+    """Test server error handling during shutdown"""
+    server = MCPTerminalServer()
+    
+    # Test transport disconnection error
+    failing_transport = MockTransport(should_fail_disconnect=True)
+    await server.start(failing_transport)
+    assert server.is_running() == True
+    
+    with pytest.raises(ServerError) as exc_info:
+        await server.stop()
+    assert "Failed to disconnect transport" in str(exc_info.value)
+    
+    # Server should still be marked as stopped even if transport fails
+    assert server.is_running() == False
+    assert failing_transport.is_connected == True  # Transport remains connected due to failure
+
 class MockTransport:
     """Mock transport for testing server startup"""
-    def __init__(self, should_fail=False):
+    def __init__(self, should_fail=False, should_fail_disconnect=False):
         self.is_connected = False
         self.should_fail = should_fail
+        self.should_fail_disconnect = should_fail_disconnect
         
     async def connect(self):
         """Mock transport connection"""
@@ -61,4 +80,6 @@ class MockTransport:
         
     async def disconnect(self):
         """Mock transport disconnection"""
+        if self.should_fail_disconnect:
+            raise Exception("Disconnection failed")
         self.is_connected = False
