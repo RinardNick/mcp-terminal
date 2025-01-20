@@ -44,4 +44,81 @@ class TerminalExecutor:
         self.allowed_commands = allowed_commands
         self.timeout_ms = timeout_ms
         self.max_output_size = max_output_size
-        self.logger = logging.getLogger(__name__) 
+        self.logger = logging.getLogger(__name__)
+        
+    async def execute(self, command: str) -> CommandResult:
+        """Execute a command and return its result
+        
+        Args:
+            command: The command to execute
+            
+        Returns:
+            CommandResult: The result of command execution
+            
+        Raises:
+            asyncio.TimeoutError: If command execution exceeds timeout
+            ValueError: If command is not allowed or invalid
+        """
+        start_time = datetime.now()
+        
+        try:
+            # Create subprocess with shell
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            try:
+                # Wait for process with timeout
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=self.timeout_ms / 1000  # Convert to seconds
+                )
+                
+                # Decode output
+                stdout = stdout_bytes.decode('utf-8')
+                stderr = stderr_bytes.decode('utf-8')
+                
+                # Check output size
+                total_size = len(stdout) + len(stderr)
+                if total_size > self.max_output_size:
+                    process.kill()
+                    raise ValueError(f"Command output exceeds maximum size of {self.max_output_size} bytes")
+                
+            except asyncio.TimeoutError:
+                process.kill()
+                raise
+                
+        except FileNotFoundError:
+            self.logger.error(f"Command not found: {command}")
+            return CommandResult(
+                command=command,
+                exit_code=127,  # Standard shell error code for command not found
+                stdout="",
+                stderr="command not found",
+                start_time=start_time,
+                end_time=datetime.now()
+            )
+        except Exception as e:
+            if not isinstance(e, asyncio.TimeoutError):
+                self.logger.error(f"Command execution failed: {str(e)}")
+                # For non-timeout errors, return a result with the error
+                return CommandResult(
+                    command=command,
+                    exit_code=-1,
+                    stdout="",
+                    stderr=str(e),
+                    start_time=start_time,
+                    end_time=datetime.now()
+                )
+            raise
+            
+        return CommandResult(
+            command=command,
+            exit_code=process.returncode,
+            stdout=stdout,
+            stderr=stderr,
+            start_time=start_time,
+            end_time=datetime.now()
+        ) 
