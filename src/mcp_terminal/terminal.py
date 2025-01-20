@@ -1,4 +1,46 @@
-"""Terminal execution module for MCP Terminal Server"""
+"""Terminal execution module for MCP Terminal Server.
+
+This module provides a secure and feature-rich way to execute terminal commands with advanced control
+and monitoring capabilities. It supports:
+
+- Command execution with output capture and error handling
+- Security controls with allowed command lists and command injection prevention
+- Resource monitoring (CPU time, memory usage, process count)
+- Output control (size limits, timeouts, streaming)
+- Comprehensive error handling and status reporting
+
+Example:
+    ```python
+    import asyncio
+    from mcp_terminal.terminal import TerminalExecutor
+
+    async def main():
+        # Create executor with resource limits
+        executor = TerminalExecutor(
+            allowed_commands=["echo", "ls"],
+            cpu_time_ms=1000,
+            max_memory_mb=100,
+            max_processes=5
+        )
+
+        try:
+            # Execute command
+            result = await executor.execute("echo 'test'")
+            print(f"Output: {result.stdout}")
+            print(f"Exit code: {result.exit_code}")
+
+            # Stream command output
+            async for chunk in executor.execute_stream("ls -l"):
+                if "stdout" in chunk:
+                    print(chunk["stdout"], end="")
+        except ValueError as e:
+            print(f"Resource limit exceeded: {e}")
+        except asyncio.TimeoutError:
+            print("Command timed out")
+
+    asyncio.run(main())
+    ```
+"""
 
 from typing import Dict, Any, Optional, List, Tuple, AsyncIterator
 from dataclasses import dataclass
@@ -11,7 +53,32 @@ from datetime import datetime
 
 @dataclass
 class CommandResult:
-    """Result of a command execution"""
+    """Result of a command execution.
+    
+    This class encapsulates all information about a command's execution, including
+    its output, exit code, and timing information.
+    
+    Attributes:
+        command (str): The command that was executed
+        exit_code (int): The command's exit code (0 for success)
+        stdout (str): Standard output from the command
+        stderr (str): Standard error from the command
+        start_time (datetime): When command execution started
+        end_time (datetime): When command execution completed
+        
+    Properties:
+        duration_ms (float): Command execution duration in milliseconds
+        
+    Example:
+        ```python
+        result = await executor.execute("echo 'test'")
+        if result.exit_code == 0:
+            print(f"Success! Output: {result.stdout}")
+        else:
+            print(f"Failed! Error: {result.stderr}")
+        print(f"Took {result.duration_ms}ms")
+        ```
+    """
     command: str
     exit_code: int
     stdout: str
@@ -21,11 +88,15 @@ class CommandResult:
     
     @property
     def duration_ms(self) -> float:
-        """Get command execution duration in milliseconds"""
+        """Get command execution duration in milliseconds."""
         return (self.end_time - self.start_time).total_seconds() * 1000
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert result to dictionary format"""
+        """Convert result to dictionary format.
+        
+        Returns:
+            dict: Dictionary containing all result fields
+        """
         return {
             "command": self.command,
             "exit_code": self.exit_code,
@@ -37,7 +108,37 @@ class CommandResult:
         }
 
 class TerminalExecutor:
-    """Terminal command execution handler"""
+    """Terminal command execution handler with security and resource controls.
+    
+    This class provides a secure way to execute terminal commands with various
+    controls and limits:
+    
+    - Command validation and security controls
+    - Resource monitoring (CPU, memory, processes)
+    - Output size limits
+    - Command timeouts
+    - Output streaming support
+    
+    Example:
+        ```python
+        # Create executor with limits
+        executor = TerminalExecutor(
+            allowed_commands=["echo", "ls"],
+            timeout_ms=5000,
+            max_output_size=1024 * 1024,
+            cpu_time_ms=1000,
+            max_memory_mb=100,
+            max_processes=5
+        )
+        
+        # Execute command
+        result = await executor.execute("echo 'test'")
+        
+        # Stream command output
+        async for chunk in executor.execute_stream("ls -l"):
+            print(chunk.get("stdout", ""), end="")
+        ```
+    """
     
     def __init__(self, 
                  allowed_commands: Optional[List[str]] = None,
@@ -46,6 +147,29 @@ class TerminalExecutor:
                  cpu_time_ms: Optional[int] = None,
                  max_memory_mb: Optional[int] = None,
                  max_processes: Optional[int] = None):
+        """Initialize terminal executor.
+        
+        Args:
+            allowed_commands: List of allowed command executables. If None, all commands are allowed.
+            timeout_ms: Maximum execution time in milliseconds (default: 30 seconds)
+            max_output_size: Maximum combined stdout/stderr size in bytes (default: 1MB)
+            cpu_time_ms: Maximum CPU time in milliseconds (optional)
+            max_memory_mb: Maximum memory usage in megabytes (optional)
+            max_processes: Maximum number of processes (optional)
+            
+        Example:
+            ```python
+            # Allow only safe commands with resource limits
+            executor = TerminalExecutor(
+                allowed_commands=["echo", "ls"],
+                timeout_ms=5000,
+                max_output_size=1024 * 1024,  # 1MB
+                cpu_time_ms=1000,             # 1 second
+                max_memory_mb=100,            # 100MB
+                max_processes=5
+            )
+            ```
+        """
         self.allowed_commands = allowed_commands
         self.timeout_ms = timeout_ms
         self.max_output_size = max_output_size
