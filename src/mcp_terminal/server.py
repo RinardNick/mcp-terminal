@@ -1,259 +1,230 @@
-"""MCP Terminal Server Implementation"""
+#!/usr/bin/env python3
+"""
+MCP Terminal Server - A secure terminal execution server implementing the Model Context Protocol.
+"""
 
-from typing import Dict, Any, Optional, Callable, Awaitable
-from mcp.server import Server, NotificationOptions
-from mcp.server.models import InitializationOptions
-from mcp_terminal.errors import ServerError
-import time
+import asyncio
 import json
-from dataclasses import dataclass, asdict
+import logging
+import signal
+import sys
+from argparse import ArgumentParser
+from datetime import datetime, timezone
+from typing import Dict, Optional, Set
 
-@dataclass
-class MetricsState:
-    """Server metrics state"""
-    min: float = 0
-    max: float = 0
-    avg: float = 0
-    total: float = 0
-    count: int = 0
+from .terminal import TerminalExecutor
 
-    def update(self, value: float) -> None:
-        """Update metrics with a new value"""
-        if self.count == 0:
-            self.min = value
-            self.max = value
-            self.avg = value
-        else:
-            self.min = min(self.min, value)
-            self.max = max(self.max, value)
-        
-        self.total += value
-        self.count += 1
-        self.avg = self.total / self.count
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('mcp-terminal')
 
-    def reset(self) -> None:
-        """Reset metrics to initial state"""
-        self.min = 0
-        self.max = 0
-        self.avg = 0
-        self.total = 0
-        self.count = 0
-
-    def to_dict(self) -> Dict[str, float]:
-        """Convert metrics to dictionary"""
-        return {
-            "min": self.min,
-            "max": self.max,
-            "avg": self.avg
-        }
-
-class MCPTerminalServer(Server):
-    """MCP server providing terminal access"""
+class MCPTerminalServer:
+    """
+    MCP Terminal Server implementation.
     
-    # Server configuration
-    SERVER_NAME = "terminal"
-    SERVER_VERSION = "0.1.0"
+    Implements the Model Context Protocol for secure terminal command execution.
+    """
     
-    def __init__(self):
-        # Initialize request handlers before calling get_capabilities
-        self.request_handlers: Dict[str, Callable[[Dict[str, Any]], Awaitable[None]]] = {}
-        self._running: bool = False
-        self._transport: Optional[Any] = None
-        self._start_time: Optional[float] = None
+    def __init__(self, allowed_commands: Optional[Set[str]] = None,
+                 timeout_ms: int = 30000,
+                 max_output_size: int = 1024 * 1024):
+        """
+        Initialize the MCP Terminal Server.
         
-        # Initialize metrics
-        self._message_counts = {"sent": 0, "received": 0, "errors": 0}
-        self._latency_stats = MetricsState()
-        
-        # Initialize capabilities
-        notification_options = NotificationOptions()
-        experimental_capabilities = {}
-        
-        initialization_options = InitializationOptions(
-            server_name=self.SERVER_NAME,
-            server_version=self.SERVER_VERSION,
-            capabilities=self.get_capabilities(
-                notification_options=notification_options,
-                experimental_capabilities=experimental_capabilities
-            ),
+        Args:
+            allowed_commands: Set of allowed command executables
+            timeout_ms: Maximum execution time in milliseconds
+            max_output_size: Maximum output size in bytes
+        """
+        self.executor = TerminalExecutor(
+            allowed_commands=list(allowed_commands) if allowed_commands else None,
+            timeout_ms=timeout_ms,
+            max_output_size=max_output_size
         )
         
-        # Call parent class initialization
-        super().__init__(initialization_options.server_name, initialization_options.server_version)
-
-    def _reset_metrics(self) -> None:
-        """Reset all server metrics"""
-        self._message_counts = {"sent": 0, "received": 0, "errors": 0}
-        self._latency_stats.reset()
-
-    async def start(self, transport: Any) -> None:
-        """Start the server with the given transport
-        
-        Args:
-            transport: The transport to use for communication
+        # Set up signal handlers
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, self._signal_handler)
             
-        Raises:
-            ServerError: If server is already running or transport connection fails
-        """
-        if self.is_running():
-            raise ServerError("Server is already running")
-
-        self._transport = transport
-        try:
-            await self._transport.connect()
-            self._running = True
-            self._start_time = time.time()
-            self._reset_metrics()
-        except Exception as e:
-            self._transport = None
-            raise ServerError(f"Failed to connect transport: {str(e)}") from e
-
-    async def stop(self) -> None:
-        """Stop the server and cleanup
+        self._reader = None
+        self._writer = None
         
-        Raises:
-            ServerError: If transport disconnection fails
-        """
-        if self._transport:
+    def _signal_handler(self, signum, frame):
+        """Handle termination signals."""
+        logger.info(f"Received signal {signum}, shutting down...")
+        if self._writer:
+            self._writer.close()
+        sys.exit(0)
+        
+    async def start(self):
+        """Start the MCP server using stdin/stdout for communication."""
+        loop = asyncio.get_event_loop()
+        
+        # Set up stdin reader
+        self._reader = asyncio.StreamReader()
+        protocol = asyncio.StreamReaderProtocol(self._reader)
+        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+        
+        # Set up stdout writer
+        transport, protocol = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, sys.stdout)
+        self._writer = asyncio.StreamWriter(transport, protocol, None, loop)
+            
+        # Send capabilities advertisement
+        await self._send_capabilities()
+        
+        # Process incoming messages
+        while True:
             try:
-                await self._transport.disconnect()
+                msg = await self._read_message()
+                if not msg:
+                    break
+                    
+                await self._handle_message(msg)
+                    
             except Exception as e:
-                # Still mark server as stopped but preserve transport state
-                self._running = False
-                self._start_time = None
-                self._reset_metrics()
-                raise ServerError(f"Failed to disconnect transport: {str(e)}") from e
-            self._transport = None
-        self._running = False
-        self._start_time = None
-        self._reset_metrics()
-
-    def is_running(self) -> bool:
-        """Check if server is currently running
-        
-        Returns:
-            bool: True if server is running, False otherwise
-        """
-        return self._running
-
-    async def handle_message(self, message: Optional[Dict[str, Any]]) -> None:
-        """Handle incoming protocol messages
-        
-        Args:
-            message: The message to process
-            
-        Raises:
-            ServerError: If the message is invalid or unsupported
-        """
-        if message is None:
-            raise ServerError("Invalid message format")
-            
-        if not isinstance(message, dict):
-            raise ServerError("Invalid message format")
-            
-        if "type" not in message:
-            raise ServerError("Missing required field: type")
-            
-        msg_type = message["type"]
-        if msg_type not in self.request_handlers:
-            self._message_counts["errors"] += 1
-            raise ServerError(f"Unsupported message type: {msg_type}")
-            
-        try:
-            handler = self.request_handlers[msg_type]
-            await handler(message)
-        except Exception as e:
-            self._message_counts["errors"] += 1
-            raise ServerError(f"Internal server error: {str(e)}") from e
-
-    async def send_message(self, message: Dict[str, Any]) -> None:
-        """Send a message through the transport
-        
-        Args:
-            message: The message to send
-            
-        Raises:
-            ServerError: If sending fails or transport is disconnected
-        """
-        if not self._transport:
-            raise ServerError("Server not started")
-            
-        try:
-            # Verify message can be serialized
-            try:
-                json.dumps(message)
-            except (TypeError, ValueError) as e:
-                self._message_counts["errors"] += 1
-                raise ServerError(f"Failed to serialize message: {str(e)}") from e
+                logger.error(f"Error processing message: {e}")
+                await self._send_error(str(e))
                 
-            start_time = time.time()
-            await self._transport.send(message)
-            latency = (time.time() - start_time) * 1000  # Convert to ms
-            
-            self._latency_stats.update(latency)
-            self._message_counts["sent"] += 1
-        except ServerError:
-            raise
-        except Exception as e:
-            self._message_counts["errors"] += 1
-            if "disconnected" in str(e).lower():
-                self._running = False
-                raise ServerError("Transport disconnected unexpectedly") from e
-            raise ServerError(f"Failed to send message: {str(e)}") from e
-
-    async def receive_message(self) -> Dict[str, Any]:
-        """Receive a message from the transport
-        
-        Returns:
-            dict: The received message
-            
-        Raises:
-            ServerError: If receiving fails or transport is disconnected
-        """
-        if not self._transport:
-            raise ServerError("Server not started")
-            
+    async def _read_message(self) -> Optional[Dict]:
+        """Read and parse a JSON message from stdin."""
         try:
-            start_time = time.time()
-            message = await self._transport.receive()
-            latency = (time.time() - start_time) * 1000  # Convert to ms
+            line = await self._reader.readline()
+            if not line:
+                return None
+                
+            return json.loads(line)
             
-            self._latency_stats.update(latency)
-            self._message_counts["received"] += 1
-            return message
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON message: {e}")
+            await self._send_error("Invalid JSON message")
+            return None
+            
+    async def _send_message(self, msg: Dict):
+        """Send a JSON message to stdout."""
+        try:
+            line = json.dumps(msg) + '\n'
+            self._writer.write(line.encode())
+            await self._writer.drain()
+            
         except Exception as e:
-            self._message_counts["errors"] += 1
-            if "disconnected" in str(e).lower():
-                self._running = False
-                raise ServerError("Transport disconnected unexpectedly") from e
-            raise ServerError(f"Failed to receive message: {str(e)}") from e
-
-    def get_status(self) -> Dict[str, Any]:
-        """Get current server status
-        
-        Returns:
-            dict: Server status information containing:
-                - state: Current server state (running/stopped)
-                - uptime: Server uptime in seconds
-                - message_counts: Message counters for sent/received/errors
-        """
-        uptime = 0
-        if self._start_time and self.is_running():
-            uptime = max(0, int(time.time() - self._start_time))
+            logger.error(f"Error sending message: {e}")
             
-        return {
-            "state": "running" if self.is_running() else "stopped",
-            "uptime": uptime,
-            "message_counts": self._message_counts.copy()
+    async def _send_capabilities(self):
+        """Send capabilities advertisement message."""
+        capabilities = {
+            "protocol": "1.0.0",
+            "name": "terminal",
+            "version": "1.0.0",
+            "capabilities": {
+                "execute": {
+                    "description": "Execute a terminal command",
+                    "parameters": {
+                        "command": {
+                            "type": "string",
+                            "description": "The command to execute"
+                        }
+                    },
+                    "returns": {
+                        "type": "object",
+                        "properties": {
+                            "exitCode": {"type": "number"},
+                            "stdout": {"type": "string"},
+                            "stderr": {"type": "string"},
+                            "startTime": {"type": "string"},
+                            "endTime": {"type": "string"}
+                        }
+                    }
+                }
+            }
         }
-
-    def get_metrics(self) -> Dict[str, Dict[str, float]]:
-        """Get server metrics
         
-        Returns:
-            dict: Server metrics containing:
-                - message_latency_ms: Message latency statistics (min/max/avg)
-        """
-        return {
-            "message_latency_ms": self._latency_stats.to_dict()
+        await self._send_message(capabilities)
+        
+    async def _send_error(self, message: str):
+        """Send an error message."""
+        error = {
+            "type": "error",
+            "data": {
+                "message": message
+            }
         }
+        
+        await self._send_message(error)
+        
+    async def _handle_message(self, msg: Dict):
+        """Handle an incoming message."""
+        try:
+            if msg.get("type") != "execute":
+                await self._send_error(f"Unknown message type: {msg.get('type')}")
+                return
+                
+            command = msg.get("data", {}).get("command")
+            if not command:
+                await self._send_error("Missing command parameter")
+                return
+                
+            # Execute the command
+            start_time = datetime.now(timezone.utc)
+            try:
+                result = await self.executor.execute(command)
+                end_time = datetime.now(timezone.utc)
+                
+                # Send the result
+                if result.exit_code == 126:  # Command not allowed
+                    await self._send_error(result.stderr)
+                else:
+                    response = {
+                        "type": "result",
+                        "data": {
+                            "command": command,
+                            "exitCode": result.exit_code,
+                            "stdout": result.stdout,
+                            "stderr": result.stderr,
+                            "startTime": start_time.isoformat(),
+                            "endTime": end_time.isoformat()
+                        }
+                    }
+                    await self._send_message(response)
+                    
+            except ValueError as e:
+                await self._send_error(str(e))
+            except asyncio.TimeoutError:
+                await self._send_error(f"Command execution timed out after {self.executor.timeout_ms}ms")
+            
+        except Exception as e:
+            logger.error(f"Error executing command: {e}")
+            await self._send_error(str(e))
+            
+def main():
+    """Main entry point for the MCP Terminal Server."""
+    parser = ArgumentParser(description="MCP Terminal Server")
+    parser.add_argument("--allowed-commands", type=str,
+                       help="Comma-separated list of allowed commands")
+    parser.add_argument("--timeout-ms", type=int, default=30000,
+                       help="Maximum execution time in milliseconds")
+    parser.add_argument("--max-output-size", type=int, default=1024*1024,
+                       help="Maximum output size in bytes")
+                       
+    args = parser.parse_args()
+    
+    allowed_commands = set(args.allowed_commands.split(",")) if args.allowed_commands else None
+    
+    server = MCPTerminalServer(
+        allowed_commands=allowed_commands,
+        timeout_ms=args.timeout_ms,
+        max_output_size=args.max_output_size
+    )
+    
+    try:
+        asyncio.run(server.start())
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+        sys.exit(1)
+        
+if __name__ == "__main__":
+    main()

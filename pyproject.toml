@@ -1,21 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "mcp-terminal"
 version = "0.1.0"
-description = "An MCP server that provides secure terminal access"
+description = "MCP Terminal Server for secure command execution"
+authors = [
+    { name = "Nicholas Rinard", email = "nickarinard@gmail.com" }
+]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.8"
 dependencies = [
-    "mcp>=0.1.0",
-    "httpx>=0.24.1"
+    "asyncio>=3.4.3",
 ]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project.optional-dependencies]
-test = [
+dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
 ]
+
+[project.scripts]
+mcp-terminal = "mcp_terminal.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+testpaths = ["tests"]

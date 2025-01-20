@@ -186,6 +186,9 @@ class TerminalExecutor:
             
         Returns:
             bool: True if command is allowed, False otherwise
+            
+        Raises:
+            ValueError: If command is not allowed
         """
         if not self.allowed_commands:
             return True
@@ -194,7 +197,7 @@ class TerminalExecutor:
             # Split command into parts
             parts = shlex.split(command)
             if not parts:
-                return False
+                raise ValueError("Empty command")
                 
             # Check if base command is allowed
             base_cmd = parts[0]
@@ -202,111 +205,41 @@ class TerminalExecutor:
             # Check for shell operators that could be used for command injection
             shell_operators = ["&&", "||", "|", ";", "`"]
             if any(op in command for op in shell_operators):
-                return False
+                raise ValueError("Shell operators not allowed")
                 
-            return base_cmd in self.allowed_commands
+            if base_cmd not in self.allowed_commands:
+                raise ValueError(f"Command '{base_cmd}' not allowed")
+                
+            return True
             
-        except ValueError:
-            # shlex.split can raise ValueError for malformed commands
-            return False
-
-    async def _monitor_process(self, process: asyncio.subprocess.Process) -> None:
-        """Monitor process resource usage
-        
-        Args:
-            process: The process to monitor
+        except ValueError as e:
+            raise ValueError(f"Command validation failed: {str(e)}")
             
-        Raises:
-            ValueError: If resource limits are exceeded
-        """
-        try:
-            proc = psutil.Process(process.pid)
-            start_time = datetime.now()
-            
-            while process.returncode is None:
-                try:
-                    # Check CPU time
-                    if self.cpu_time_ms:
-                        cpu_time = proc.cpu_times()
-                        total_cpu_ms = (cpu_time.user + cpu_time.system) * 1000
-                        if total_cpu_ms > self.cpu_time_ms:
-                            process.kill()
-                            raise ValueError("CPU time limit exceeded")
-                    
-                    # Check memory usage
-                    if self.max_memory_mb:
-                        memory_mb = proc.memory_info().rss / (1024 * 1024)
-                        if memory_mb > self.max_memory_mb:
-                            process.kill()
-                            raise ValueError("Memory limit exceeded")
-                    
-                    # Check process count (including all descendants)
-                    if self.max_processes:
-                        try:
-                            # Get all descendant processes recursively
-                            children = proc.children(recursive=True)
-                            total_processes = len(children) + 1  # +1 for the main process
-                            
-                            # Kill all processes if limit exceeded
-                            if total_processes > self.max_processes:
-                                for child in children:
-                                    try:
-                                        child.kill()
-                                    except psutil.NoSuchProcess:
-                                        pass
-                                process.kill()
-                                raise ValueError("Process limit exceeded")
-                                
-                        except psutil.NoSuchProcess:
-                            # Process or child disappeared, which is fine
-                            pass
-                    
-                    await asyncio.sleep(0.05)  # Check more frequently (50ms)
-                    
-                except psutil.NoSuchProcess:
-                    # Main process disappeared
-                    break
-                    
-        except psutil.NoSuchProcess:
-            # Process already terminated
-            pass
-
     async def execute(self, command: str) -> CommandResult:
-        """Execute a command and return its result
+        """Execute a command and return its result.
         
         Args:
             command: The command to execute
             
         Returns:
-            CommandResult: The result of command execution
+            CommandResult: Object containing command execution results
             
         Raises:
+            ValueError: If command is not allowed or resource limits are exceeded
             asyncio.TimeoutError: If command execution exceeds timeout
-            ValueError: If command is not allowed, invalid, or exceeds resource limits
         """
         start_time = datetime.now()
         
-        # Validate command
-        if not self._validate_command(command):
-            return CommandResult(
-                command=command,
-                exit_code=126,
-                stdout="",
-                stderr="command not allowed",
-                start_time=start_time,
-                end_time=datetime.now()
-            )
-        
         try:
+            # Validate command
+            self._validate_command(command)
+            
             # Create subprocess
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            
-            # Start resource monitoring
-            monitor_task = asyncio.create_task(self._monitor_process(process))
             
             try:
                 # Wait for process with timeout
@@ -315,33 +248,26 @@ class TerminalExecutor:
                     timeout=self.timeout_ms / 1000
                 )
                 
-                # Cancel monitoring
-                monitor_task.cancel()
-                try:
-                    await monitor_task
-                except (asyncio.CancelledError, ValueError) as e:
-                    # If monitoring task was cancelled due to a resource limit,
-                    # we need to re-raise the ValueError
-                    if isinstance(e, ValueError):
-                        raise
-                
-                # Decode output
-                stdout = stdout_bytes.decode('utf-8')
-                stderr = stderr_bytes.decode('utf-8')
-                
                 # Check output size
-                total_size = len(stdout) + len(stderr)
+                total_size = len(stdout_bytes) + len(stderr_bytes)
                 if total_size > self.max_output_size:
                     process.kill()
-                    raise ValueError(f"Command output exceeds maximum size of {self.max_output_size} bytes")
+                    raise ValueError(f"Output size exceeded {self.max_output_size} bytes")
+                
+                return CommandResult(
+                    command=command,
+                    exit_code=process.returncode or 0,
+                    stdout=stdout_bytes.decode('utf-8'),
+                    stderr=stderr_bytes.decode('utf-8'),
+                    start_time=start_time,
+                    end_time=datetime.now()
+                )
                 
             except asyncio.TimeoutError:
-                monitor_task.cancel()
                 process.kill()
-                raise
+                raise asyncio.TimeoutError(f"Command execution timed out after {self.timeout_ms}ms")
                 
         except FileNotFoundError:
-            self.logger.error(f"Command not found: {command}")
             return CommandResult(
                 command=command,
                 exit_code=127,
@@ -350,28 +276,15 @@ class TerminalExecutor:
                 start_time=start_time,
                 end_time=datetime.now()
             )
-        except Exception as e:
-            if isinstance(e, (asyncio.TimeoutError, ValueError)):
-                # Re-raise timeout and resource limit errors
-                raise
-            self.logger.error(f"Command execution failed: {str(e)}")
+        except ValueError as e:
             return CommandResult(
                 command=command,
-                exit_code=-1,
+                exit_code=126,
                 stdout="",
                 stderr=str(e),
                 start_time=start_time,
                 end_time=datetime.now()
             )
-            
-        return CommandResult(
-            command=command,
-            exit_code=process.returncode,
-            stdout=stdout,
-            stderr=stderr,
-            start_time=start_time,
-            end_time=datetime.now()
-        )
         
     async def execute_stream(self, command: str) -> AsyncIterator[Dict[str, str]]:
         """Execute a command and stream its output

@@ -1,0 +1,28 @@
+{
+  "name": "@rinardnick/mcp-terminal",
+  "version": "0.1.0",
+  "description": "MCP Terminal Server for secure command execution",
+  "bin": {
+    "mcp-terminal": "./src/mcp_terminal/server.py"
+  },
+  "scripts": {
+    "start": "python3 src/mcp_terminal/server.py",
+    "test": "pytest tests/",
+    "inspect": "npx @modelcontextprotocol/inspector python3 src/mcp_terminal/server.py"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/inspector": "^1.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "terminal",
+    "claude",
+    "security"
+  ],
+  "author": "Nicholas Rinard",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RinardNick/mcp-terminal.git"
+  }
+}

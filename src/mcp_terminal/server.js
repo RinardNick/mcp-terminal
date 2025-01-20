@@ -41,31 +41,7 @@ const allowedCommands = argv['allowed-commands']
   : null
 
 // Create MCP server
-const server = new MCPServer({
-  name: 'terminal',
-  version: '1.0.0',
-  capabilities: {
-    execute: {
-      description: 'Execute a terminal command',
-      parameters: {
-        command: {
-          type: 'string',
-          description: 'The command to execute',
-        },
-      },
-      returns: {
-        type: 'object',
-        properties: {
-          exitCode: { type: 'number' },
-          stdout: { type: 'string' },
-          stderr: { type: 'string' },
-          startTime: { type: 'string' },
-          endTime: { type: 'string' },
-        },
-      },
-    },
-  },
-})
+const server = new MCPServer()
 
 // Validate command
 function validateCommand(command) {
@@ -184,7 +160,7 @@ async function executeCommand(command) {
 }
 
 // Register command execution handler
-server.on('execute', async ({ command }) => {
+server.on('execute', async (command) => {
   try {
     const result = await executeCommand(command)
     return result
@@ -199,15 +175,5 @@ server.on('execute', async ({ command }) => {
   }
 })
 
-// Handle server errors
-server.on('error', (error) => {
-  console.error('Server error:', error)
-  process.exit(1)
-})
-
 // Start server
-console.log('Starting MCP Terminal server...')
-server.start().catch((error) => {
-  console.error('Failed to start server:', error)
-  process.exit(1)
-})
+server.start()
