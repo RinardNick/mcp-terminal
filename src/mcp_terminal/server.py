@@ -12,7 +12,7 @@ from argparse import ArgumentParser
 from datetime import datetime, timezone
 from typing import Dict, Optional, Set
 
-from .terminal import TerminalExecutor
+from mcp_terminal.terminal import TerminalExecutor
 
 # Configure logging
 logging.basicConfig(
@@ -115,26 +115,30 @@ class MCPTerminalServer:
     async def _send_capabilities(self):
         """Send capabilities advertisement message."""
         capabilities = {
-            "protocol": "1.0.0",
-            "name": "terminal",
-            "version": "1.0.0",
-            "capabilities": {
-                "execute": {
-                    "description": "Execute a terminal command",
-                    "parameters": {
-                        "command": {
-                            "type": "string",
-                            "description": "The command to execute"
-                        }
-                    },
-                    "returns": {
-                        "type": "object",
-                        "properties": {
-                            "exitCode": {"type": "number"},
-                            "stdout": {"type": "string"},
-                            "stderr": {"type": "string"},
-                            "startTime": {"type": "string"},
-                            "endTime": {"type": "string"}
+            "jsonrpc": "2.0",
+            "method": "capabilities",
+            "params": {
+                "protocol": "1.0.0",
+                "name": "terminal",
+                "version": "1.0.0",
+                "capabilities": {
+                    "execute": {
+                        "description": "Execute a terminal command",
+                        "parameters": {
+                            "command": {
+                                "type": "string",
+                                "description": "The command to execute"
+                            }
+                        },
+                        "returns": {
+                            "type": "object",
+                            "properties": {
+                                "exitCode": {"type": "number"},
+                                "stdout": {"type": "string"},
+                                "stderr": {"type": "string"},
+                                "startTime": {"type": "string"},
+                                "endTime": {"type": "string"}
+                            }
                         }
                     }
                 }
@@ -143,27 +147,40 @@ class MCPTerminalServer:
         
         await self._send_message(capabilities)
         
-    async def _send_error(self, message: str):
+    async def _send_error(self, message: str, code: int = -32603, id: Optional[str] = None):
         """Send an error message."""
         error = {
-            "type": "error",
-            "data": {
+            "jsonrpc": "2.0",
+            "error": {
+                "code": code,
                 "message": message
             }
         }
+        if id is not None:
+            error["id"] = id
         
         await self._send_message(error)
         
     async def _handle_message(self, msg: Dict):
         """Handle an incoming message."""
         try:
-            if msg.get("type") != "execute":
-                await self._send_error(f"Unknown message type: {msg.get('type')}")
+            if msg.get("jsonrpc") != "2.0":
+                await self._send_error("Invalid JSON-RPC version", -32600)
                 return
                 
-            command = msg.get("data", {}).get("command")
+            method = msg.get("method")
+            if not method:
+                await self._send_error("Method not found", -32601, msg.get("id"))
+                return
+                
+            if method != "execute":
+                await self._send_error(f"Method '{method}' not found", -32601, msg.get("id"))
+                return
+                
+            params = msg.get("params", {})
+            command = params.get("command")
             if not command:
-                await self._send_error("Missing command parameter")
+                await self._send_error("Missing command parameter", -32602, msg.get("id"))
                 return
                 
             # Execute the command
@@ -174,11 +191,12 @@ class MCPTerminalServer:
                 
                 # Send the result
                 if result.exit_code == 126:  # Command not allowed
-                    await self._send_error(result.stderr)
+                    await self._send_error(result.stderr, -32000, msg.get("id"))
                 else:
                     response = {
-                        "type": "result",
-                        "data": {
+                        "jsonrpc": "2.0",
+                        "id": msg.get("id"),
+                        "result": {
                             "command": command,
                             "exitCode": result.exit_code,
                             "stdout": result.stdout,
@@ -190,13 +208,17 @@ class MCPTerminalServer:
                     await self._send_message(response)
                     
             except ValueError as e:
-                await self._send_error(str(e))
+                await self._send_error(str(e), -32000, msg.get("id"))
             except asyncio.TimeoutError:
-                await self._send_error(f"Command execution timed out after {self.executor.timeout_ms}ms")
+                await self._send_error(
+                    f"Command execution timed out after {self.executor.timeout_ms}ms",
+                    -32000,
+                    msg.get("id")
+                )
             
         except Exception as e:
             logger.error(f"Error executing command: {e}")
-            await self._send_error(str(e))
+            await self._send_error(str(e), -32603, msg.get("id"))
             
 def main():
     """Main entry point for the MCP Terminal Server."""
