@@ -17,7 +17,16 @@ const DEFAULT_MAX_OUTPUT = 1024 * 1024 // 1MB
 // Define Zod schemas for validation
 const CommandArgumentsSchema = z.object({
   command: z.string().min(1, 'Command cannot be empty'),
-  allowedCommands: z.array(z.string()).optional(),
+  allowedCommands: z.preprocess((val) => {
+    if (typeof val === 'string') {
+      try {
+        return JSON.parse(val)
+      } catch {
+        return val
+      }
+    }
+    return val
+  }, z.array(z.string()).optional()),
   timeoutMs: z.number().min(1).max(300000).optional(), // max 5 minutes
   maxOutputSize: z
     .number()
@@ -34,7 +43,7 @@ const server = new Server(
   },
   {
     capabilities: {
-      tools: {},
+      tools: {}, // Empty tools object
     },
   }
 )
