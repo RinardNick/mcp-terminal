@@ -65,6 +65,33 @@ async def test_server_shutdown_errors():
     assert server.is_running() == False
     assert failing_transport.is_connected == True  # Transport remains connected due to failure
 
+@pytest.mark.asyncio
+async def test_protocol_errors():
+    """Test server handling of protocol-level errors"""
+    server = MCPTerminalServer()
+    transport = MockTransport()
+    
+    # Start server
+    await server.start(transport)
+    
+    # Test invalid message handling
+    with pytest.raises(ServerError) as exc_info:
+        await server.handle_message({"type": "invalid_type"})
+    assert "Unsupported message type" in str(exc_info.value)
+    
+    # Test malformed message
+    with pytest.raises(ServerError) as exc_info:
+        await server.handle_message(None)
+    assert "Invalid message format" in str(exc_info.value)
+    
+    # Test missing required fields
+    with pytest.raises(ServerError) as exc_info:
+        await server.handle_message({})
+    assert "Missing required field: type" in str(exc_info.value)
+    
+    # Cleanup
+    await server.stop()
+
 class MockTransport:
     """Mock transport for testing server startup"""
     def __init__(self, should_fail=False, should_fail_disconnect=False):
