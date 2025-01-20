@@ -78,3 +78,58 @@ class MCPTerminalServer(Server):
         msg_type = message["type"]
         if msg_type not in self.request_handlers:
             raise ServerError(f"Unsupported message type: {msg_type}")
+            
+        try:
+            handler = self.request_handlers[msg_type]
+            await handler(message)
+        except Exception as e:
+            raise ServerError(f"Internal server error: {str(e)}") from e
+
+    async def send_message(self, message):
+        """Send a message through the transport
+        
+        Args:
+            message: The message to send
+            
+        Raises:
+            ServerError: If sending fails or transport is disconnected
+        """
+        if not self._transport:
+            raise ServerError("Server not started")
+            
+        try:
+            # Verify message can be serialized
+            import json
+            try:
+                json.dumps(message)
+            except (TypeError, ValueError) as e:
+                raise ServerError(f"Failed to serialize message: {str(e)}") from e
+                
+            await self._transport.send(message)
+        except ServerError:
+            raise
+        except Exception as e:
+            if "disconnected" in str(e).lower():
+                self._running = False
+                raise ServerError("Transport disconnected unexpectedly") from e
+            raise ServerError(f"Failed to send message: {str(e)}") from e
+
+    async def receive_message(self):
+        """Receive a message from the transport
+        
+        Returns:
+            dict: The received message
+            
+        Raises:
+            ServerError: If receiving fails or transport is disconnected
+        """
+        if not self._transport:
+            raise ServerError("Server not started")
+            
+        try:
+            return await self._transport.receive()
+        except Exception as e:
+            if "disconnected" in str(e).lower():
+                self._running = False
+                raise ServerError("Transport disconnected unexpectedly") from e
+            raise ServerError(f"Failed to receive message: {str(e)}") from e
