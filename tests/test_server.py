@@ -1,15 +1,18 @@
+"""Tests for MCP Terminal Server"""
+
 import pytest
+import asyncio
 from mcp.server import Server
 from mcp_terminal.server import MCPTerminalServer
 from mcp_terminal.errors import ServerError
-import asyncio
+from tests.utils import MockTransport
 
 def test_server_initialization():
     """Test basic server initialization"""
     server = MCPTerminalServer()
     assert isinstance(server, Server)  # Should inherit from MCP Server
-    assert server.name == "terminal"
-    assert server.version == "0.1.0"
+    assert server.name == MCPTerminalServer.SERVER_NAME
+    assert server.version == MCPTerminalServer.SERVER_VERSION
 
 @pytest.mark.asyncio
 async def test_server_startup():
@@ -219,49 +222,3 @@ async def test_server_metrics():
     
     # Cleanup
     await server.stop()
-
-class MockTransport:
-    """Mock transport for testing server startup"""
-    def __init__(self, should_fail=False, should_fail_disconnect=False):
-        self.is_connected = False
-        self.should_fail = should_fail
-        self.should_fail_disconnect = should_fail_disconnect
-        self.should_fail_send = False
-        self.should_fail_receive = False
-        self.should_disconnect = False
-        self.add_latency = 0  # Simulated latency in ms
-        
-    async def connect(self):
-        """Mock transport connection"""
-        if self.should_fail:
-            raise Exception("Connection failed")
-        self.is_connected = True
-        
-    async def disconnect(self):
-        """Mock transport disconnection"""
-        if self.should_fail_disconnect:
-            raise Exception("Disconnection failed")
-        self.is_connected = False
-        
-    async def send(self, message):
-        """Mock message sending"""
-        if not self.is_connected or self.should_disconnect:
-            self.is_connected = False
-            raise Exception("Transport disconnected")
-        if self.should_fail_send:
-            raise Exception("Send failed")
-        if self.add_latency:
-            import asyncio
-            await asyncio.sleep(self.add_latency / 1000)  # Convert ms to seconds
-            
-    async def receive(self):
-        """Mock message receiving"""
-        if not self.is_connected or self.should_disconnect:
-            self.is_connected = False
-            raise Exception("Transport disconnected")
-        if self.should_fail_receive:
-            raise Exception("Receive failed")
-        if self.add_latency:
-            import asyncio
-            await asyncio.sleep(self.add_latency / 1000)  # Convert ms to seconds
-        return {"type": "test"}
