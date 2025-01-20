@@ -1,18 +1,29 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { Transport } from '@modelcontextprotocol/sdk/server/transport.js'
 import {
   CallToolRequest,
   ListToolsRequest,
   JSONRPCRequest,
   JSONRPCResponse,
   ListToolsResult,
+  JSONRPCMessage,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 
+interface Transport {
+  start(): Promise<void>
+  close(): Promise<void>
+  connect(): Promise<void>
+  disconnect(): Promise<void>
+  send(message: JSONRPCMessage): Promise<void>
+  receive(): Promise<string>
+}
+
 class MockTransport implements Transport {
+  async start(): Promise<void> {}
+  async close(): Promise<void> {}
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
-  async send(message: string): Promise<void> {}
+  async send(message: JSONRPCMessage): Promise<void> {}
   async receive(): Promise<string> {
     return JSON.stringify({
       jsonrpc: '2.0',
@@ -79,7 +90,12 @@ describe('Terminal Server', () => {
       }
     )
     transport = new MockTransport()
+    await transport.start()
     await server.connect(transport)
+  })
+
+  afterEach(async () => {
+    await transport.close()
   })
 
   describe('Tool Listing', () => {
