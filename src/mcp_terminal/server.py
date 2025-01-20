@@ -2,6 +2,7 @@
 
 from mcp.server import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
+from mcp_terminal.errors import ServerError
 
 class MCPTerminalServer(Server):
     """MCP server providing terminal access"""
@@ -29,9 +30,16 @@ class MCPTerminalServer(Server):
 
     async def start(self, transport):
         """Start the server with the given transport"""
+        if self.is_running():
+            raise ServerError("Server is already running")
+
         self._transport = transport
-        await self._transport.connect()
-        self._running = True
+        try:
+            await self._transport.connect()
+            self._running = True
+        except Exception as e:
+            self._transport = None
+            raise ServerError(f"Failed to connect transport: {str(e)}") from e
 
     async def stop(self):
         """Stop the server and cleanup"""
