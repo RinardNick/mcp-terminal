@@ -1,2 +1,4 @@
 uv.lock
 .env
+
+tests/__pycache__/
