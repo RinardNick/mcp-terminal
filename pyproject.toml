@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-terminal"
-version = "1.1.0"
+version = "0.1.0"
 description = "MCP Terminal Server for secure command execution"
 authors = [
     { name = "Nicholas Rinard", email = "nickarinard@gmail.com" }
@@ -13,6 +13,8 @@ readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "asyncio>=3.4.3",
+    "mcp>=1.2.0",
+    "httpx>=0.24.0"
 ]
 
 [project.optional-dependencies]

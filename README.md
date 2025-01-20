@@ -14,52 +14,34 @@ A secure terminal execution server implementing the Model Context Protocol (MCP)
   - Capability advertisement
   - Streaming output support
 
-## Installation
+## Development
+
+### Local Setup
 
 ```bash
-# Install from npm (for use with Claude Desktop)
-npm install -g @rinardnick/mcp-terminal
-
-# Install for development
+# Clone the repository
 git clone https://github.com/RinardNick/mcp-terminal.git
 cd mcp-terminal
-python -m venv .venv
+
+# Create and activate virtual environment using uv
+uv venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -e ".[dev]"
+
+# Install development dependencies
+uv pip install -e ".[dev]"
 ```
 
-## Using with Claude Desktop
+### Publishing to PyPI
 
-1. **Install the Module**:
+```bash
+# Build the package
+uv pip install build
+python -m build
 
-   ```bash
-   npm install -g @rinardnick/mcp-terminal
-   ```
-
-2. **Configure Claude Desktop**:
-   Edit your Claude Desktop config file (typically at `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-   ```json
-   {
-     "servers": {
-       "terminal": {
-         "command": "python3",
-         "args": [
-           "-m",
-           "mcp_terminal.server",
-           "--allowed-commands",
-           "python,pip,git,ls,cd",
-           "--timeout-ms",
-           "30000",
-           "--max-output-size",
-           "1048576"
-         ]
-       }
-     }
-   }
-   ```
-
-## Development
+# Upload to PyPI
+uv pip install twine
+python -m twine upload dist/*
+```
 
 ### Testing with MCP Inspector
 
@@ -85,6 +67,46 @@ pytest tests/test_terminal.py
 # Run with coverage
 pytest --cov=mcp_terminal tests/
 ```
+
+## Using with Claude Desktop
+
+Once the package is published to PyPI:
+
+1. **Install UV** (if not already installed):
+
+   ```bash
+   pip install uv
+   ```
+
+2. **Install the Package using UV**:
+
+   ```bash
+   uv pip install mcp-terminal
+   ```
+
+3. **Configure Claude Desktop**:
+   Edit your Claude Desktop config file (typically at `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+   ```json
+   {
+     "mcpServers": {
+       "terminal": {
+         "command": "uv",
+         "args": [
+           "pip",
+           "run",
+           "mcp-terminal",
+           "--allowed-commands",
+           "python,pip,git,ls,cd",
+           "--timeout-ms",
+           "30000",
+           "--max-output-size",
+           "1048576"
+         ]
+       }
+     }
+   }
+   ```
 
 ## Protocol Implementation
 
